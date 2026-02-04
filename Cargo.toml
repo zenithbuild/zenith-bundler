@@ -1,0 +1,65 @@
+[package]
+name = "zenith-bundler"
+version = "0.1.0"
+edition = "2021"
+description = "Rolldown Plugin for the Zenith Framework - Zero-Cost Abstraction Bundler"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+napi = []
+
+[dependencies]
+# CSS Optimization & Pruning
+lightningcss = "1.0.0-alpha.70"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Zenith Compiler (local crate)
+compiler-native = { path = "../zenith-compiler/native/compiler-native", default-features = false }
+
+# Node.js FFI (for TypeScript interface)
+napi = { version = "2.16.0", features = ["async", "serde-json"] }
+napi-derive = "2.16.0"
+
+# Async runtime
+tokio = { version = "1.0", features = ["fs", "macros", "rt-multi-thread"] }
+
+# Concurrent collections for CSS buffering
+dashmap = "5.5"
+
+# ArcStr for Rolldown compatibility
+arcstr = "1.2"
+
+# Error handling
+anyhow = "1.0"
+
+# Regex for CSS class extraction
+regex = "1.10"
+
+# Rolldown from git (latest compatible version)
+# Note: Using git source because crates.io version 0.1.0 has broken oxc_resolver compat
+[dependencies.rolldown]
+git = "https://github.com/rolldown/rolldown"
+branch = "main"
+default-features = false
+
+[dependencies.rolldown_plugin]
+git = "https://github.com/rolldown/rolldown"
+branch = "main"
+default-features = false
+
+[dependencies.rolldown_common]
+git = "https://github.com/rolldown/rolldown"
+branch = "main"
+default-features = false
+
+[build-dependencies]
+napi-build = "2.1.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
