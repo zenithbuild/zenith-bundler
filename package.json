@@ -1,6 +1,6 @@
 {
   "name": "@zenithbuild/bundler",
-  "version": "1.3.2",
+  "version": "1.3.5",
   "devDependencies": {
     "@types/bun": "latest"
   },
@@ -10,5 +10,15 @@
   "publishConfig": {
     "access": "public"
   },
-  "main": "index.js"
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "index.node",
+    "dev-server.js",
+    "package.json",
+    "README.md"
+  ],
+  "dependencies": {
+    "express": "^4.21.2"
+  }
 }
