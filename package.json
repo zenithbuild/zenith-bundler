@@ -1,6 +1,6 @@
 {
   "name": "@zenithbuild/bundler",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "scripts": {
     "build": "napi build --platform --release",
     "artifacts": "napi artifacts",
