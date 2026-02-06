@@ -20,60 +20,60 @@ import path from 'path'
  * This is served as an external JS file, not inlined
  */
 export function generateBundleJS(pluginData?: Record<string, any>): string {
-    // Serialize plugin data blindly - CLI never inspects what's inside.
-    // We escape </script> sequences just in case this bundle is ever inlined (unlikely but safe).
-    const serializedData = pluginData
-        ? JSON.stringify(pluginData).replace(/<\/script/g, '<\\/script')
-        : '{}';
+  // Serialize plugin data blindly - CLI never inspects what's inside.
+  // We escape </script> sequences just in case this bundle is ever inlined (unlikely but safe).
+  const serializedData = pluginData
+    ? JSON.stringify(pluginData).replace(/<\/script/g, '<\\/script')
+    : '{}';
 
-    // Resolve core runtime paths - assumes sibling directory or relative in node_modules
-    const rootDir = process.cwd()
-    let coreRuntimePath = path.join(rootDir, '../zenith-core/dist/runtime')
-    if (!existsSync(coreRuntimePath)) {
-        coreRuntimePath = path.join(rootDir, '../zenith-core/core')
+  // Resolve core runtime paths - assumes sibling directory or relative in node_modules
+  const rootDir = process.cwd()
+  let coreRuntimePath = path.join(rootDir, '../zenith-core/dist/runtime')
+  if (!existsSync(coreRuntimePath)) {
+    coreRuntimePath = path.join(rootDir, '../zenith-core/core')
+  }
+
+  let reactivityJS = ''
+  let lifecycleJS = ''
+
+  try {
+    let reactivityFile = path.join(coreRuntimePath, 'reactivity/index.js')
+    if (!existsSync(reactivityFile)) reactivityFile = path.join(coreRuntimePath, 'reactivity/index.ts')
+
+    let lifecycleFile = path.join(coreRuntimePath, 'lifecycle/index.js')
+    if (!existsSync(lifecycleFile)) lifecycleFile = path.join(coreRuntimePath, 'lifecycle/index.ts')
+
+    if (existsSync(reactivityFile) && reactivityFile.endsWith('.js')) {
+      reactivityJS = transformExportsToGlobal(readFileSync(reactivityFile, 'utf-8'));
     }
-
-    let reactivityJS = ''
-    let lifecycleJS = ''
-
-    try {
-        let reactivityFile = path.join(coreRuntimePath, 'reactivity/index.js')
-        if (!existsSync(reactivityFile)) reactivityFile = path.join(coreRuntimePath, 'reactivity/index.ts')
-
-        let lifecycleFile = path.join(coreRuntimePath, 'lifecycle/index.js')
-        if (!existsSync(lifecycleFile)) lifecycleFile = path.join(coreRuntimePath, 'lifecycle/index.ts')
-
-        if (existsSync(reactivityFile) && reactivityFile.endsWith('.js')) {
-            reactivityJS = transformExportsToGlobal(readFileSync(reactivityFile, 'utf-8'));
-        }
-        if (existsSync(lifecycleFile) && lifecycleFile.endsWith('.js')) {
-            lifecycleJS = transformExportsToGlobal(readFileSync(lifecycleFile, 'utf-8'));
-        }
-    } catch (e) {
-        if (process.env.ZENITH_DEBUG === 'true') {
-            console.warn('[Zenith] Could not load runtime from core, falling back to internal', e);
-        }
+    if (existsSync(lifecycleFile) && lifecycleFile.endsWith('.js')) {
+      lifecycleJS = transformExportsToGlobal(readFileSync(lifecycleFile, 'utf-8'));
     }
-
-    // Fallback to internal hydration_runtime.js from native compiler source
-    // Use the compiler's own location to find the file, not process.cwd()
-    if (!reactivityJS || !lifecycleJS) {
-        // Resolve relative to this bundle-generator.ts file's location
-        // In compiled form, this will be in dist/runtime/, so we go up to find native/
-        // ADAPTATION: zenith-bundler is sibling to zenith-compiler
-        const compilerRoot = path.resolve(path.dirname(import.meta.url.replace('file://', '')), '../../zenith-compiler');
-        const nativeRuntimePath = path.join(compilerRoot, 'native/compiler-native/src/hydration_runtime.js');
-        if (existsSync(nativeRuntimePath)) {
-            const nativeJS = readFileSync(nativeRuntimePath, 'utf-8');
-            // IMPORTANT: Include the FULL IIFE - do NOT strip the wrapper!
-            // The runtime has its own bootstrap guard and idempotency check.
-            // It will install primitives to window and create window.__ZENITH_RUNTIME__
-            reactivityJS = nativeJS;
-            lifecycleJS = ' '; // Ensure it doesn't trigger the "not found" message
-        }
+  } catch (e) {
+    if (process.env.ZENITH_DEBUG === 'true') {
+      console.warn('[Zenith] Could not load runtime from core, falling back to internal', e);
     }
+  }
 
-    return `/*!
+  // Fallback to internal hydration_runtime.js from native compiler source
+  // Use the compiler's own location to find the file, not process.cwd()
+  if (!reactivityJS || !lifecycleJS) {
+    // Resolve relative to this bundle-generator.ts file's location
+    // In compiled form, this will be in dist/runtime/, so we go up to find native/
+    // ADAPTATION: zenith-bundler is sibling to zenith-compiler
+    const compilerRoot = path.resolve(path.dirname(import.meta.url.replace('file://', '')), '../../zenith-compiler');
+    const nativeRuntimePath = path.join(compilerRoot, 'native/compiler-native/src/hydration_runtime.js');
+    if (existsSync(nativeRuntimePath)) {
+      const nativeJS = readFileSync(nativeRuntimePath, 'utf-8');
+      // IMPORTANT: Include the FULL IIFE - do NOT strip the wrapper!
+      // The runtime has its own bootstrap guard and idempotency check.
+      // It will install primitives to window and create window.__ZENITH_RUNTIME__
+      reactivityJS = nativeJS;
+      lifecycleJS = ' '; // Ensure it doesn't trigger the "not found" message
+    }
+  }
+
+  return `/*!
  * Zenith Runtime v1.0.1
  * Shared client-side runtime for hydration and reactivity
  */
@@ -835,10 +835,20 @@ ${lifecycleJS ? `  // ============================================
   global.componentRegistry = componentRegistry;
   
 })(typeof window !== 'undefined' ? window : globalThis);
+
+// ESM Exports for modules expecting generic names
+const g = typeof window !== 'undefined' ? window : globalThis;
+export const signal = g.zenSignal;
+export const effect = g.zenEffect;
+export const computed = g.zenMemo;
+export const onMount = g.zenOnMount;
+export const onUnmount = g.zenOnUnmount;
+export const h = g.h;
+export const Fragment = g.Fragment;
 `;
 }
 
 // Helpers
 function transformExportsToGlobal(source: string): string {
-    return source.replace(/export\s+(const|function|class)\s+(\w+)/g, 'var $2');
+  return source.replace(/export\s+(const|function|class)\s+(\w+)/g, 'var $2');
 }

@@ -190,15 +190,18 @@ async function compilePage(
 function generatePageHTML(page: CompiledPage, globalStyles: string, pluginEnvelope: Record<string, unknown>): string {
     const { html, styles, analysis, routePath, pageScript } = page
 
-    // Combine styles
+    // Combine styles - Page styles only, global is external
     const pageStyles = styles
-    const allStyles = globalStyles + '\n' + pageStyles
+    const allStyles = pageStyles
+
+    // External Global Stylesheet
+    const globalStylesheetLink = '<link rel="stylesheet" href="/assets/styles.css">'
 
     // Build script tags only if needed
     let scriptTags = ''
     if (analysis.needsHydration) {
         scriptTags = `
-  <script src="/assets/bundle.js"></script>`
+  <script type="module" src="/assets/bundle.js"></script>`
 
         if (pageScript) {
             // Generate a safe filename from route path
@@ -221,7 +224,7 @@ function generatePageHTML(page: CompiledPage, globalStyles: string, pluginEnvelo
         if (!/<style[^>]*>/.test(finalHtml)) {
             finalHtml = finalHtml.replace(
                 '</head>',
-                `  <style>\n${allStyles}\n  </style>\n</head>`
+                `  ${globalStylesheetLink}\n  <style>\n${allStyles}\n  </style>\n</head>`
             )
         }
 
@@ -243,6 +246,16 @@ function generatePageHTML(page: CompiledPage, globalStyles: string, pluginEnvelo
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Zenith App</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "@zenithbuild/core": "/assets/bundle.js",
+        "@zenithbuild/router": "/assets/bundle.js",
+        "@zenithbuild/runtime": "/assets/bundle.js"
+      }
+    }
+  </script>
+  ${globalStylesheetLink}
   <style>
 ${allStyles}
   </style>

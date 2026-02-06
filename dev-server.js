@@ -14,14 +14,54 @@ const port = 3000;
 const start = async (projectRoot = process.env.PROJECT_ROOT || path.resolve(__dirname, '..')) => {
     console.log(`[DevServer] Starting Zenith for: ${projectRoot}`);
 
+    // Dynamic import of JS-based build logic (since dist/index.js is ESM)
+    const { compileCssAsync, generateBundleJS, resolveGlobalsCss } = await import('./dist/index.js');
+
     let controller;
     try {
         controller = new ZenithDevController(projectRoot);
     } catch (e) {
-        console.error("Failed to initialize ZenithDevController:", e);
+        console.error("Failed to initialize ZenithDevController:Native controller access is opaque", e);
         console.error("Ensure you have built the native module: 'napi build --platform'");
         process.exit(1);
     }
+
+    // Asset Cache
+    const assets = {
+        css: '',
+        bundle: '',
+        cssPath: null
+    };
+
+    // Helper: Rebuild Assets (JS Logic)
+    async function rebuildAssets() {
+        console.log('[DevServer] Rebuilding JS assets...');
+
+        // 1. Build CSS
+        const globalsCss = resolveGlobalsCss(projectRoot);
+        if (globalsCss) {
+            const res = await compileCssAsync({
+                input: globalsCss,
+                output: ':memory:',
+                minify: false
+            });
+            if (res.success) {
+                assets.css = res.css;
+                console.log('[DevServer] CSS Compiled');
+            } else {
+                console.error('[DevServer] CSS Compile Failed:', res.error);
+            }
+        }
+
+        // 2. Build Bundle
+        // optimizing: reusing previous bundle if only CSS changed? No, fast enough.
+        // We pass empty pluginData for now as we can't easily extract it from native controller.
+        assets.bundle = generateBundleJS({});
+        console.log('[DevServer] Bundle Generated');
+    }
+
+    // Initial Build
+    await rebuildAssets();
 
     // Create HTTP and WS Server
     const server = http.createServer(app);
@@ -40,7 +80,7 @@ const start = async (projectRoot = process.env.PROJECT_ROOT || path.resolve(__di
         });
     }
 
-    // Watcher Integration (Tactical Fix)
+    // Watcher Integration
     const watchPath = path.join(projectRoot, 'src/**/*.zen');
     console.log(`[Watcher] Watching ${watchPath}`);
     const watcher = chokidar.watch(watchPath, {
@@ -53,9 +93,15 @@ const start = async (projectRoot = process.env.PROJECT_ROOT || path.resolve(__di
             // 1. Tell Rust to re-compile (updates the AssetStore in RAM)
             console.time('Rebuild');
             await controller.rebuild();
+
+            // 2. Rebuild JS assets (CSS/Bundle)
+            if (filePath.endsWith('.css') || filePath.endsWith('.zen') || filePath.endsWith('.ts')) {
+                await rebuildAssets();
+            }
+
             console.timeEnd('Rebuild');
 
-            // 2. Tell the Browser to fetch the new assets
+            // 3. Tell the Browser to fetch the new assets
             notifyHMR();
         } catch (e) {
             console.error("Rebuild failed:", e);
@@ -64,10 +110,58 @@ const start = async (projectRoot = process.env.PROJECT_ROOT || path.resolve(__di
 
     // Serve Assets
     app.use(async (req, res, next) => {
-        // 1. Try to serve from memory store
+        // Intercept Asset Requests (that Native Controller fails on)
+        if (req.path === '/assets/styles.css') {
+            res.setHeader('Content-Type', 'text/css');
+            return res.send(assets.css);
+        }
+        if (req.path === '/assets/bundle.js') {
+            res.setHeader('Content-Type', 'application/javascript');
+            return res.send(assets.bundle);
+        }
+
+        // 1. Try to serve from native memory store (HTML mostly)
         const asset = controller.getAsset(req.path);
 
         if (asset) {
+            let content = asset;
+
+            // Inject Tags into HTML
+            if (req.path === '/' || req.path.endsWith('.html')) {
+                let html = content.toString();
+                const cssTag = `<link rel="stylesheet" href="/assets/styles.css">`;
+                const jsTag = `<script type="module" src="/assets/bundle.js"></script>`;
+
+                // HMR Script
+                const hmrScript = `
+    <script>
+    const ws = new WebSocket('ws://' + location.host);
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'update') {
+            console.log('[HMR] Update received. Reloading...');
+            location.reload(); 
+        }
+    };
+    ws.onopen = () => console.log("[Zenith] HMR Connected");
+    </script>`;
+
+                if (html.includes("</head>")) {
+                    html = html.replace("</head>", `${cssTag}${hmrScript}</head>`);
+                } else {
+                    html = `${cssTag}${hmrScript}${html}`;
+                }
+
+                if (html.includes("</body>")) {
+                    html = html.replace("</body>", `${jsTag}</body>`);
+                } else {
+                    html = `${html}${jsTag}`;
+                }
+
+                res.setHeader('Content-Type', 'text/html');
+                return res.send(html);
+            }
+
             if (req.path.endsWith('.js')) {
                 res.setHeader('Content-Type', 'application/javascript');
             } else if (req.path.endsWith('.css')) {
@@ -76,15 +170,15 @@ const start = async (projectRoot = process.env.PROJECT_ROOT || path.resolve(__di
             return res.send(asset);
         }
 
-        // 2. SPA / HTML Fallback
+        // 2. Fallback HTML (if native returns nothing for /)
         if (req.path === '/' || !path.extname(req.path)) {
             res.send(`
 <!DOCTYPE html>
 <html>
 <head>
     <title>Zenith Dev</title>
-    <script type="module" src="/index.js"></script>
-    <link rel="stylesheet" href="/zenith.css">
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script type="module" src="/assets/bundle.js"></script>
     <script>
     // HMR Client
     const ws = new WebSocket('ws://' + location.host);
