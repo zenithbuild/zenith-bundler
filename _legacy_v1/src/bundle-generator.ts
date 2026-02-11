@@ -503,6 +503,7 @@ ${lifecycleJS ? `  // ============================================
       }
       
       // Process expressions
+      console.log("EXPRESSIONS REGISTERED", expressionRegistry.size);
       for (const [commentNode, exprId] of exprLocationMap) {
         updateNode(commentNode, exprId, pageState);
       }
@@ -536,6 +537,7 @@ ${lifecycleJS ? `  // ============================================
       renderErrorPage(e, { activity: 'zenithHydrate' });
     }
   }
+  global.zenithHydrate = zenithHydrate;
 
   // Update logic for comment placeholders
   function updateNode(placeholder, exprId, pageState) {
@@ -834,17 +836,14 @@ ${lifecycleJS ? `  // ============================================
   // Initialize component registry
   global.componentRegistry = componentRegistry;
   
+  // Ensure zenith global exists
+  global.zenith = global.zenith || {};
+  
 })(typeof window !== 'undefined' ? window : globalThis);
 
-// ESM Exports for modules expecting generic names
-const g = typeof window !== 'undefined' ? window : globalThis;
-export const signal = g.zenSignal;
-export const effect = g.zenEffect;
-export const computed = g.zenMemo;
-export const onMount = g.zenOnMount;
-export const onUnmount = g.zenOnUnmount;
-export const h = g.h;
-export const Fragment = g.Fragment;
+// NOTE: ESM exports removed. Runtime exposes globals via window.zenSignal, etc.
+// Import map redirects @zenithbuild/runtime → /runtime.js which sets up globals.
+// Page scripts access these via the import map or window globals.
 `;
 }
 

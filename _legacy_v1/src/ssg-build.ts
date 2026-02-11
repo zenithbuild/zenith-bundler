@@ -70,6 +70,10 @@ interface CompiledPage {
     outputDir: string
     /** Compiler-emitted bundling plan (if bundling required) */
     bundlePlan?: BundlePlan
+    /** Discovered components map (needed for bundler/loader) */
+    components?: Map<string, any>
+    /** Path to the layout wrapper */
+    layoutPath?: string
 }
 
 export interface SSGBuildOptions {
@@ -103,9 +107,6 @@ async function compilePage(
     // Determine source directory relative to pages (e.g., 'src' or 'app' or root)
     const srcDir = path.dirname(pagesDir)
 
-    // Layout discovery removed in Phase A1
-    // const layouts = discoverLayouts(layoutsDir)
-
     // Discover components & layouts
     const componentsDir = path.join(srcDir, 'components')
     const layoutsDir = path.join(srcDir, 'layouts')
@@ -116,21 +117,34 @@ async function compilePage(
         for (const [k, v] of comps) components.set(k, v)
     }
 
+    // Fix: Discover logic for Layout Reuse
+    const layoutsMap = new Map<string, { path: string, template: string }>();
     if (fs.existsSync(layoutsDir)) {
+        // Re-use discoverComponents for basic file finding
         const layoutComps = discoverComponents(layoutsDir)
         for (const [k, v] of layoutComps) {
             // Start with uppercase = component
             if (k[0] === k[0]?.toUpperCase()) {
                 components.set(k, v)
+                // Also store as layout
+                layoutsMap.set(k, { path: v.path, template: fs.readFileSync(v.path, 'utf-8') });
             }
         }
     }
 
+    // Determine Layout
+    const relativePath = path.relative(path.join(srcDir, 'pages'), pagePath)
+    const layouts = Array.from(layoutsMap.values())
+    const layout = layouts.find(l => {
+        const layoutRelative = path.dirname(path.relative(layoutsDir, l.path))
+        const pageRelative = path.dirname(path.relative(pagesDir, pagePath))
+        return layoutRelative === pageRelative || layoutRelative === '.'
+    })
+
     // Compile with unified pipeline
-    // const layoutToUse = layouts.get('DefaultLayout')
     const result = await compile(source, pagePath, {
         components,
-        // layout: layoutToUse
+        // layout: layoutToUse (handled by wrapper)
     })
 
     if (!result.finalized) {
@@ -172,7 +186,9 @@ async function compilePage(
             isStatic: !needsHydration && !analysis.needsSSR
         },
         outputDir,
-        bundlePlan: result.finalized.bundlePlan
+        bundlePlan: result.finalized.bundlePlan,
+        components, // Pass discovered components
+        layoutPath: layout ? layout.path : undefined
     }
 }
 
@@ -458,15 +474,16 @@ export async function buildSSG(options: SSGBuildOptions): Promise<void> {
             }
 
             // Bundle ONLY if compiler emitted a BundlePlan (no inference)
-            let bundledJS = pageJS
-            if (page.bundlePlan) {
-                const plan: BundlePlan = {
-                    ...page.bundlePlan,
-                    entry: pageJS,
-                    resolveRoots: [path.join(baseDir, 'node_modules'), 'node_modules']
-                }
-                bundledJS = await bundlePageScript(plan)
-            }
+            // Use unified bundler API
+            // Bundle ONLY if compiler emitted a BundlePlan (no inference)
+            // Use unified bundler API
+            const bundleResult = await bundlePageScript({
+                pagePath: page.filePath,
+                root: baseDir,
+                components: page.components,
+                layoutPath: page.layoutPath // Fix: Pass layout path
+            })
+            const bundledJS = bundleResult.code
             fs.writeFileSync(path.join(outDir, 'assets', pageJsName), bundledJS)
         }
 
@@ -495,16 +512,13 @@ export async function buildSSG(options: SSGBuildOptions): Promise<void> {
                 has404 = true
                 if (compiled.pageScript) {
                     const pageJS = generatePageJS(compiled)
-                    // Bundle ONLY if compiler emitted a BundlePlan (no inference)
-                    let bundledJS = pageJS
-                    if (compiled.bundlePlan) {
-                        const plan: BundlePlan = {
-                            ...compiled.bundlePlan,
-                            entry: pageJS,
-                            resolveRoots: [path.join(baseDir, 'node_modules'), 'node_modules']
-                        }
-                        bundledJS = await bundlePageScript(plan)
-                    }
+                    const bundleResult = await bundlePageScript({
+                        pagePath: custom404Path,
+                        root: baseDir,
+                        components: compiled.components,
+                        layoutPath: compiled.layoutPath
+                    })
+                    const bundledJS = bundleResult.code
                     fs.writeFileSync(path.join(outDir, 'assets', 'page_404.js'), bundledJS)
                 }
             } catch (error: any) {
@@ -559,4 +573,3 @@ export async function buildSSG(options: SSGBuildOptions): Promise<void> {
         console.log(`   ${page.routePath.padEnd(20)} → ${page.outputDir}/index.html (${type})`)
     }
 }
-

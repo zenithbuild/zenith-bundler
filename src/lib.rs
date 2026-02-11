@@ -1,116 +1,194 @@
-//! Zenith Bundler
+//! # Zenith Bundler
 //!
-//! Rolldown Plugin for the Zenith Framework.
+//! Deterministic bundler that consumes the sealed `CompilerOutput` from
+//! `zenith_compiler` and produces executable JS + virtual CSS.
 //!
-//! This crate acts as the **Intelligence Layer** that feeds the Zenith compiler
-//! output to Rolldown, implementing:
-//!
-//! - **Deferred Hydration**: Bootstrap loader with dynamic imports
-//! - **Capability-Based Chunking**: Separate runtime-core and runtime-anim
-//! - **CSS Pruning**: Tree-shake unused Tailwind via ZenManifest.css_classes
-//! - **HTML Injection**: Inject hashed script/CSS links and modulepreload
-//!
-//! # Architecture
-//!
-//! ```text
-//! .zen files → ZenithPlugin (resolve_id/load) → Rolldown Engine → Optimized Output
-//! ```
+//! The bundler must NOT mutate, re-index, or reinterpret compiler output.
+//! It resolves modules/imports only — never components or cross-file semantics.
 
-pub mod bundler;
-pub mod css;
-pub mod html;
+pub mod bundle;
 pub mod plugin;
-pub mod store;
+pub mod utils;
 
-pub use css::CssBuffer;
-pub use html::HtmlInjector;
-pub use plugin::ZenithPlugin;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-// Re-export Rolldown types for convenience
-pub use rolldown::{Bundler, BundlerBuilder, BundlerOptions};
-pub use rolldown_plugin::Plugin;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-// --- NAPI Integration ---
+// Re-export the compiler's sealed type so consumers don't need a separate dep
+pub use zenith_compiler::compiler::CompilerOutput;
 
-#[cfg(feature = "napi")]
-use napi_derive::napi;
-#[cfg(feature = "napi")]
-use std::sync::Arc;
-#[cfg(feature = "napi")]
-use crate::store::AssetStore;
-#[cfg(feature = "napi")]
-use tokio::sync::{mpsc, oneshot};
+// ---------------------------------------------------------------------------
+// Build Mode
+// ---------------------------------------------------------------------------
 
-#[cfg(feature = "napi")]
-#[napi]
-pub struct ZenithDevController {
-    store: Arc<AssetStore>,
-    rebuild_tx: mpsc::Sender<oneshot::Sender<()>>,
+/// The build mode determines sourcemap behavior and optimization level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BuildMode {
+    /// Development — sourcemaps enabled, no minification.
+    Dev,
+    /// Production — no sourcemaps by default, minification enabled.
+    Prod,
+    /// Static Site Generation — write to disk, production optimizations.
+    SSG,
 }
 
-#[cfg(feature = "napi")]
-#[napi]
-impl ZenithDevController {
-    #[napi(constructor)]
-    pub fn new(project_root: String) -> Self {
-        let store = Arc::new(AssetStore::new());
-        let store_clone = store.clone();
-        
-        // Channel for rebuild signals (Robust HMR Pattern)
-        // Main thread sends (reply_channel) -> Builder builds -> Builder replies
-        let (tx, mut rx) = mpsc::channel::<oneshot::Sender<()>>(1);
+// ---------------------------------------------------------------------------
+// Component Definition (opaque to bundler)
+// ---------------------------------------------------------------------------
 
-        // Spawn Watcher/Builder Thread
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async move {
-                let mut bundler = crate::bundler::create_dev_bundler(
-                    &format!("{}/src/main.zen", project_root),
-                    Some(&format!("{}/src/components", project_root)),
-                    store_clone
-                );
-                
-                // Initial Build
-                match bundler.write().await {
-                    Ok(_outputs) => {}, // println! removed
-                    Err(_e) => {}, // eprintln! removed for silence? Or keep errors? User said "all logs". I'll keep errors if critical, but silence is cleaner for "library".
-                }
+/// A discovered component definition.
+/// The bundler forwards this to the loader but never interprets it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentDef {
+    /// Filesystem path to the component's `.zen` file.
+    pub path: PathBuf,
+    /// Raw template source (if pre-loaded).
+    pub source: Option<String>,
+}
 
-                // Internal Watch Loop (Driven by NAPI calls)
-                while let Some(reply_tx) = rx.recv().await {
-                    match bundler.write().await {
-                        Ok(_) => {
-                            let _ = reply_tx.send(());
-                        }
-                        Err(_e) => {
-                            let _ = reply_tx.send(()); 
-                        }
-                    }
-                }
-            });
-        });
+// ---------------------------------------------------------------------------
+// Diagnostic
+// ---------------------------------------------------------------------------
 
-        Self { store, rebuild_tx: tx }
+/// A structured diagnostic emitted during bundling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub level: DiagnosticLevel,
+    pub message: String,
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiagnosticLevel {
+    Error,
+    Warning,
+    Info,
+}
+
+// ---------------------------------------------------------------------------
+// BundlePlan
+// ---------------------------------------------------------------------------
+
+/// Describes WHAT to bundle.
+#[derive(Debug, Clone)]
+pub struct BundlePlan {
+    /// Path to the `.zen` page file (relative or absolute).
+    pub page_path: String,
+    /// Output directory. Defaults to `dist/`.
+    pub out_dir: Option<PathBuf>,
+    /// Build mode.
+    pub mode: BuildMode,
+}
+
+// ---------------------------------------------------------------------------
+// BundleOptions
+// ---------------------------------------------------------------------------
+
+/// Describes HOW to bundle.
+#[derive(Debug, Clone)]
+pub struct BundleOptions {
+    /// Optional discovered components map (tag name → definition).
+    /// Forwarded to the loader. Bundler never resolves these.
+    pub components: Option<HashMap<String, ComponentDef>>,
+    /// Optional pre-compiled metadata for validation.
+    /// If provided, the bundler validates post-build expressions match.
+    pub metadata: Option<CompilerOutput>,
+    /// Strict mode (default: true). Invariant violations abort the build.
+    pub strict: bool,
+    /// Whether to write output files to disk.
+    pub write_to_disk: bool,
+    /// Explicitly enable/disable minification (overrides mode default).
+    pub minify: Option<bool>,
+}
+
+impl Default for BundleOptions {
+    fn default() -> Self {
+        Self {
+            components: None,
+            metadata: None,
+            strict: true,
+            write_to_disk: false,
+            minify: None,
+        }
     }
+}
 
-    #[napi]
-    pub fn get_asset(&self, path: String) -> Option<String> {
-        self.store.get(&path)
-    }
+// ---------------------------------------------------------------------------
+// BundleResult
+// ---------------------------------------------------------------------------
 
-    /// Trigger a rebuild and wait for completion
-    #[napi]
-    pub async fn rebuild(&self) -> napi::Result<()> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.rebuild_tx
-            .send(reply_tx)
-            .await
-            .map_err(|_| napi::Error::from_reason("Builder thread disconnected"))?;
-            
-        reply_rx
-            .await
-            .map_err(|_| napi::Error::from_reason("Builder failed to reply"))?;
-            
-        Ok(())
-    }
+/// The sealed output of a successful bundle.
+/// CLI and dev server consume this as-is — no post-concat or mutation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleResult {
+    /// Final JS (entry chunk as a string).
+    pub entry_js: String,
+    /// Virtual collected CSS (if any).
+    pub css: Option<String>,
+    /// Expression table — must exactly match metadata if provided.
+    pub expressions: Vec<String>,
+    /// Diagnostics collected during the build.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+// ---------------------------------------------------------------------------
+// BundleError
+// ---------------------------------------------------------------------------
+
+/// Errors that abort the bundle.
+#[derive(Debug, Error)]
+pub enum BundleError {
+    #[error("Compiler error: {0}")]
+    CompilerError(String),
+
+    #[error("Expression mismatch: expected {expected} expressions, got {got}")]
+    ExpressionMismatch { expected: usize, got: usize },
+
+    #[error("Expression content mismatch at index {index}: expected `{expected}`, got `{got}`")]
+    ExpressionContentMismatch {
+        index: usize,
+        expected: String,
+        got: String,
+    },
+
+    #[error("Missing data-zx-e placeholder for index {index}")]
+    MissingPlaceholder { index: usize },
+
+    #[error("Build failed: {0}")]
+    BuildError(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Validation failed: {0}")]
+    ValidationError(String),
+}
+
+// ---------------------------------------------------------------------------
+// Public API — Single Emission Engine
+// ---------------------------------------------------------------------------
+
+/// Bundle a single page using the Rolldown engine.
+///
+/// **There is only one bundling codepath.** Every build — single-page,
+/// multi-page, dev, prod — runs through Rolldown with the ZenithLoader
+/// plugin. This guarantees:
+///
+/// - One graph builder
+/// - One emission flow
+/// - One ordering source
+/// - Zero divergence vectors
+///
+/// The bundler:
+/// 1. Compiles the `.zen` source via the ZenithLoader plugin
+/// 2. Runs Rolldown for graph resolution and chunk emission
+/// 3. Validates output against metadata (if provided, in strict mode)
+/// 4. Returns a sealed `BundleResult`
+pub async fn bundle_page(
+    plan: BundlePlan,
+    opts: BundleOptions,
+) -> Result<BundleResult, BundleError> {
+    bundle::execute_bundle(plan, opts).await
 }
