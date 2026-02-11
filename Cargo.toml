@@ -8,6 +8,10 @@ license = "MIT"
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "zenith-bundler"
+path = "src/main.rs"
+
 [dependencies]
 # Zenith Compiler (sealed API)
 zenith_compiler = { path = "../zenith-compiler/zenith_compiler" }

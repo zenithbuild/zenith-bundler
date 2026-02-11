@@ -274,8 +274,16 @@ async fn golden_e2e_with_strict_metadata() {
     let path = file.path().to_string_lossy().to_string();
 
     let metadata = CompilerOutput {
+        ir_version: 1,
         html: String::new(),
         expressions: vec!["title".into(), "body".into()],
+        hoisted: Default::default(),
+        components_scripts: Default::default(),
+        component_instances: Default::default(),
+        signals: Default::default(),
+        expression_bindings: Default::default(),
+        marker_bindings: Default::default(),
+        event_bindings: Default::default(),
     };
 
     let plan = BundlePlan {

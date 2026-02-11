@@ -87,8 +87,16 @@ async fn strict_mode_matching_metadata_passes() {
 
     // Provide matching metadata
     let metadata = CompilerOutput {
+        ir_version: 1,
         html: String::new(), // HTML not used for expression comparison
         expressions: vec!["title".into()],
+        hoisted: Default::default(),
+        components_scripts: Default::default(),
+        component_instances: Default::default(),
+        signals: Default::default(),
+        expression_bindings: Default::default(),
+        marker_bindings: Default::default(),
+        event_bindings: Default::default(),
     };
 
     let opts = BundleOptions {
@@ -112,8 +120,16 @@ async fn strict_mode_mismatched_count_fails() {
 
     // Provide wrong metadata (expects 2 expressions)
     let metadata = CompilerOutput {
+        ir_version: 1,
         html: String::new(),
         expressions: vec!["title".into(), "extra".into()],
+        hoisted: Default::default(),
+        components_scripts: Default::default(),
+        component_instances: Default::default(),
+        signals: Default::default(),
+        expression_bindings: Default::default(),
+        marker_bindings: Default::default(),
+        event_bindings: Default::default(),
     };
 
     let opts = BundleOptions {
@@ -144,8 +160,16 @@ async fn strict_mode_mismatched_content_fails() {
 
     // Right count, wrong content
     let metadata = CompilerOutput {
+        ir_version: 1,
         html: String::new(),
         expressions: vec!["wrong_name".into()],
+        hoisted: Default::default(),
+        components_scripts: Default::default(),
+        component_instances: Default::default(),
+        signals: Default::default(),
+        expression_bindings: Default::default(),
+        marker_bindings: Default::default(),
+        event_bindings: Default::default(),
     };
 
     let opts = BundleOptions {

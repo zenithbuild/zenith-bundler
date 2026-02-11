@@ -274,8 +274,16 @@ mod tests {
         ZenithLoaderConfig {
             components: None,
             metadata: Some(CompilerOutput {
+                ir_version: 1,
                 html: String::new(),
                 expressions,
+                hoisted: Default::default(),
+                components_scripts: Default::default(),
+                component_instances: Default::default(),
+                signals: Default::default(),
+                expression_bindings: Default::default(),
+                marker_bindings: Default::default(),
+                event_bindings: Default::default(),
             }),
             strict: true,
             is_dev: false,

@@ -392,8 +392,16 @@ async fn strict_inline_and_rolldown_mirror_count() {
     let path = file.path().to_string_lossy().to_string();
 
     let metadata = CompilerOutput {
+        ir_version: 1,
         html: String::new(),
         expressions: vec!["title".into(), "extra".into()],
+        hoisted: Default::default(),
+        components_scripts: Default::default(),
+        component_instances: Default::default(),
+        signals: Default::default(),
+        expression_bindings: Default::default(),
+        marker_bindings: Default::default(),
+        event_bindings: Default::default(),
     };
 
     let plan = BundlePlan {
@@ -427,8 +435,16 @@ async fn strict_inline_and_rolldown_mirror_content() {
     let path = file.path().to_string_lossy().to_string();
 
     let metadata = CompilerOutput {
+        ir_version: 1,
         html: String::new(),
         expressions: vec!["wrong_name".into()],
+        hoisted: Default::default(),
+        components_scripts: Default::default(),
+        component_instances: Default::default(),
+        signals: Default::default(),
+        expression_bindings: Default::default(),
+        marker_bindings: Default::default(),
+        event_bindings: Default::default(),
     };
 
     let plan = BundlePlan {

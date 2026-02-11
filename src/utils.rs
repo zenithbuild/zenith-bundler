@@ -338,8 +338,16 @@ mod tests {
     #[test]
     fn test_generate_virtual_entry() {
         let output = CompilerOutput {
+            ir_version: 1,
             html: "<div data-zx-e=\"0\"></div>".into(),
             expressions: vec!["title".into()],
+            hoisted: Default::default(),
+            components_scripts: Default::default(),
+            component_instances: Default::default(),
+            signals: Default::default(),
+            expression_bindings: Default::default(),
+            marker_bindings: Default::default(),
+            event_bindings: Default::default(),
         };
         let entry = generate_virtual_entry(&output);
         assert!(entry.contains("__zenith_html"));
